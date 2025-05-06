@@ -18,7 +18,7 @@ dist/
 build/
 
 # VSCode
-.vscode/*.log
+.vscode/
 logs/
 *.txt
 
