@@ -2,7 +2,8 @@ FROM python:3.9-slim AS builder
 
 WORKDIR /app
 
-COPY ../requirements.txt .
+# The COPY command should be relative to the build context
+COPY requirements.txt .
 
 RUN pip install --user --no-cache-dir -r requirements.txt
 

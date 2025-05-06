@@ -57,34 +57,96 @@ def serialize_avro(data, schema):
 
 
 def main():
-    conf = {"bootstrap.servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")}
-    producer = Producer(conf)
-    topic = os.getenv("KAFKA_TOPIC", "sensor_data")
+    max_retries = 5
+    retry_count = 0
 
-    logger.info(
-        f"Starting Kafka producer, streaming to topic '{topic}'...",
-        extra={"correlation_id": "N/A"},
-    )
-    try:
-        while True:
-            correlation_id = str(uuid.uuid4())
-            data = get_sample_data()
-            avro_bytes = serialize_avro(data, parsed_schema)
-            # Use sensor_id as key for partitioning
-            producer.produce(
-                topic,
-                key=str(data["sensor_id"]),
-                value=avro_bytes,
-                callback=lambda err, msg, cid=correlation_id: delivery_report(
-                    err, msg, cid
+    while True:
+        try:
+            conf = {
+                "bootstrap.servers": os.getenv(
+                    "KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"
                 ),
+                # Add error handling configuration
+                "error_cb": lambda err: logger.error(
+                    f"Kafka error: {err}", extra={"correlation_id": "N/A"}
+                ),
+                # Add logging configuration
+                "logger": logger,
+                # Add security settings (if needed)
+                "security.protocol": os.getenv("KAFKA_SECURITY_PROTOCOL", "PLAINTEXT"),
+            }
+
+            producer = Producer(conf)
+            topic = os.getenv("KAFKA_TOPIC", "sensor_data")
+
+            # Reset retry count on successful connection
+            retry_count = 0
+
+            logger.info(
+                f"Starting Kafka producer, streaming to topic '{topic}'...",
+                extra={"correlation_id": "N/A"},
             )
-            producer.poll(0)
-            time.sleep(1)  # Stream data every second
-    except KeyboardInterrupt:
-        logger.info("Producer stopped.", extra={"correlation_id": "N/A"})
-    finally:
-        producer.flush()
+
+            try:
+                while True:
+                    correlation_id = str(uuid.uuid4())
+                    data = get_sample_data()
+
+                    try:
+                        avro_bytes = serialize_avro(data, parsed_schema)
+                        # Use sensor_id as key for partitioning
+                        producer.produce(
+                            topic,
+                            key=str(data["sensor_id"]),
+                            value=avro_bytes,
+                            callback=lambda err,
+                            msg,
+                            cid=correlation_id: delivery_report(err, msg, cid),
+                        )
+                        # Poll more frequently to handle callbacks
+                        producer.poll(0.1)
+                    except BufferError:
+                        logger.warning(
+                            "Local buffer full, waiting for free space...",
+                            extra={"correlation_id": correlation_id},
+                        )
+                        # Poll until space becomes available
+                        producer.poll(1)
+                        continue
+                    except Exception as e:
+                        logger.error(
+                            f"Error producing message: {e}",
+                            extra={"correlation_id": correlation_id},
+                        )
+
+                    time.sleep(1)  # Stream data every second
+            except KeyboardInterrupt:
+                logger.info(
+                    "Producer stopped by user.", extra={"correlation_id": "N/A"}
+                )
+                break
+            finally:
+                # Ensure all messages are sent before exiting
+                logger.info("Flushing producer...", extra={"correlation_id": "N/A"})
+                producer.flush(10)  # 10 second timeout
+
+        except Exception as e:
+            retry_count += 1
+            wait_time = min(30, 2**retry_count)  # Exponential backoff
+            logger.error(
+                f"Failed to initialize producer (attempt {retry_count}/{max_retries}): {e}. "
+                f"Retrying in {wait_time} seconds...",
+                extra={"correlation_id": "N/A"},
+            )
+
+            if retry_count >= max_retries:
+                logger.critical(
+                    "Maximum retry attempts reached. Exiting...",
+                    extra={"correlation_id": "N/A"},
+                )
+                break
+
+            time.sleep(wait_time)
 
 
 if __name__ == "__main__":

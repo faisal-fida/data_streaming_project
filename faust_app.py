@@ -4,6 +4,7 @@ import os
 import io
 from fastavro import schemaless_reader, parse_schema
 import uuid
+import asyncio
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,14 +57,36 @@ async def process_sensor_data(stream):
             logger.info(
                 f"Processing event: {data}", extra={"correlation_id": correlation_id}
             )
+
+            # Add data validation
+            if not all(
+                k in data for k in ["sensor_id", "temperature", "humidity", "timestamp"]
+            ):
+                logger.warning(
+                    f"Incomplete data received: {data}",
+                    extra={"correlation_id": correlation_id},
+                )
+                continue
+
             sensor_data = SensorData(**data)
             # Forward event to processed topic
             await processed_topic.send(value=sensor_data)
+            logger.info(
+                f"Event forwarded to processed topic",
+                extra={"correlation_id": correlation_id},
+            )
+        except ValueError as ve:
+            logger.error(
+                f"Data validation error: {ve}",
+                extra={"correlation_id": correlation_id},
+            )
         except Exception as e:
             logger.error(
                 f"Failed to process event: {e}",
                 extra={"correlation_id": correlation_id},
             )
+            # Add a small delay before continuing to prevent tight error loops
+            await asyncio.sleep(0.5)
 
 
 if __name__ == "__main__":
