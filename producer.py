@@ -4,8 +4,13 @@ from confluent_kafka import Producer
 from fastavro import parse_schema, schemaless_writer
 import io
 import logging
+import os
+import uuid
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(correlation_id)s] %(message)s",
+)
 logger = logging.getLogger("producer")
 
 # Avro schema for sensor data
@@ -33,11 +38,16 @@ def get_sample_data():
     return data
 
 
-def delivery_report(err, msg):
+def delivery_report(err, msg, correlation_id):
     if err is not None:
-        logger.error(f"Message delivery failed: {err}")
+        logger.error(
+            f"Message delivery failed: {err}", extra={"correlation_id": correlation_id}
+        )
     else:
-        logger.info(f"Message delivered to {msg.topic()} [{msg.partition()}]")
+        logger.info(
+            f"Message delivered to {msg.topic()} [{msg.partition()}]",
+            extra={"correlation_id": correlation_id},
+        )
 
 
 def serialize_avro(data, schema):
@@ -47,13 +57,17 @@ def serialize_avro(data, schema):
 
 
 def main():
-    conf = {"bootstrap.servers": "localhost:9092"}
+    conf = {"bootstrap.servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")}
     producer = Producer(conf)
-    topic = "sensor_data"
+    topic = os.getenv("KAFKA_TOPIC", "sensor_data")
 
-    logger.info(f"Starting Kafka producer, streaming to topic '{topic}'...")
+    logger.info(
+        f"Starting Kafka producer, streaming to topic '{topic}'...",
+        extra={"correlation_id": "N/A"},
+    )
     try:
         while True:
+            correlation_id = str(uuid.uuid4())
             data = get_sample_data()
             avro_bytes = serialize_avro(data, parsed_schema)
             # Use sensor_id as key for partitioning
@@ -61,12 +75,14 @@ def main():
                 topic,
                 key=str(data["sensor_id"]),
                 value=avro_bytes,
-                callback=delivery_report,
+                callback=lambda err, msg, cid=correlation_id: delivery_report(
+                    err, msg, cid
+                ),
             )
             producer.poll(0)
             time.sleep(1)  # Stream data every second
     except KeyboardInterrupt:
-        logger.info("Producer stopped.")
+        logger.info("Producer stopped.", extra={"correlation_id": "N/A"})
     finally:
         producer.flush()
 

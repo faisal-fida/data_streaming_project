@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000';
+
 function App() {
   const [sensorData, setSensorData] = useState({
     sensor_id: '',
@@ -10,6 +12,19 @@ function App() {
   });
   const [receivedData, setReceivedData] = useState([]);
   const [message, setMessage] = useState('');
+  const [loadingSend, setLoadingSend] = useState(false);
+  const [loadingFetch, setLoadingFetch] = useState(false);
+  const [errors, setErrors] = useState({});
+
+  const validate = () => {
+    const errs = {};
+    if (!sensorData.sensor_id || isNaN(sensorData.sensor_id)) errs.sensor_id = 'Sensor ID is required and must be a number';
+    if (!sensorData.temperature || isNaN(sensorData.temperature)) errs.temperature = 'Temperature is required and must be a number';
+    if (!sensorData.humidity || isNaN(sensorData.humidity)) errs.humidity = 'Humidity is required and must be a number';
+    if (!sensorData.timestamp || isNaN(sensorData.timestamp)) errs.timestamp = 'Timestamp is required and must be a number';
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
 
   const handleChange = (e) => {
     setSensorData({
@@ -19,8 +34,14 @@ function App() {
   };
 
   const sendData = async () => {
+    if (!validate()) {
+      setMessage('Please fix validation errors');
+      return;
+    }
+    setLoadingSend(true);
+    setMessage('');
     try {
-      const response = await axios.post('http://localhost:8000/send', {
+      const response = await axios.post(`${API_BASE_URL}/send`, {
         sensor_id: parseInt(sensorData.sensor_id),
         temperature: parseFloat(sensorData.temperature),
         humidity: parseFloat(sensorData.humidity),
@@ -28,16 +49,22 @@ function App() {
       });
       setMessage(response.data.message);
     } catch (error) {
-      setMessage('Failed to send data');
+      setMessage(error.response?.data?.detail || 'Failed to send data');
+    } finally {
+      setLoadingSend(false);
     }
   };
 
   const fetchData = async () => {
+    setLoadingFetch(true);
+    setMessage('');
     try {
-      const response = await axios.get('http://localhost:8000/receive');
+      const response = await axios.get(`${API_BASE_URL}/receive`);
       setReceivedData(response.data);
     } catch (error) {
-      setMessage('Failed to fetch data');
+      setMessage(error.response?.data?.detail || 'Failed to fetch data');
+    } finally {
+      setLoadingFetch(false);
     }
   };
 
@@ -57,6 +84,7 @@ function App() {
         onChange={handleChange}
         style={{ width: '100%', marginBottom: 10 }}
       />
+      {errors.sensor_id && <p style={{ color: 'red' }}>{errors.sensor_id}</p>}
       <input
         type="number"
         step="0.01"
@@ -66,6 +94,7 @@ function App() {
         onChange={handleChange}
         style={{ width: '100%', marginBottom: 10 }}
       />
+      {errors.temperature && <p style={{ color: 'red' }}>{errors.temperature}</p>}
       <input
         type="number"
         step="0.01"
@@ -75,6 +104,7 @@ function App() {
         onChange={handleChange}
         style={{ width: '100%', marginBottom: 10 }}
       />
+      {errors.humidity && <p style={{ color: 'red' }}>{errors.humidity}</p>}
       <input
         type="number"
         name="timestamp"
@@ -83,14 +113,15 @@ function App() {
         onChange={handleChange}
         style={{ width: '100%', marginBottom: 10 }}
       />
-      <button onClick={sendData} style={{ width: '100%', padding: 10 }}>
-        Send to Kafka
+      {errors.timestamp && <p style={{ color: 'red' }}>{errors.timestamp}</p>}
+      <button onClick={sendData} style={{ width: '100%', padding: 10 }} disabled={loadingSend}>
+        {loadingSend ? 'Sending...' : 'Send to Kafka'}
       </button>
       {message && <p>{message}</p>}
 
       <h2>Received Data</h2>
-      <button onClick={fetchData} style={{ marginBottom: 10 }}>
-        Refresh Data
+      <button onClick={fetchData} style={{ marginBottom: 10 }} disabled={loadingFetch}>
+        {loadingFetch ? 'Loading...' : 'Refresh Data'}
       </button>
       <table border="1" cellPadding="5" style={{ width: '100%' }}>
         <thead>

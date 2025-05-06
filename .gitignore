@@ -18,7 +18,9 @@ dist/
 build/
 
 # VSCode
-.vscode/
+.vscode/*.log
+logs/
+*.txt
 
 # MacOS
 .DS_Store
