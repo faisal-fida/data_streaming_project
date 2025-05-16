@@ -7,11 +7,21 @@ import logging
 import os
 import uuid
 
+
+# Set up a filter to add correlation_id to log records
+class CorrelationIDFilter(logging.Filter):
+    def filter(self, record):
+        if not hasattr(record, "correlation_id"):
+            record.correlation_id = "N/A"
+        return True
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [%(correlation_id)s] %(message)s",
 )
 logger = logging.getLogger("producer")
+logger.addFilter(CorrelationIDFilter())
 
 # Avro schema for sensor data
 schema = {

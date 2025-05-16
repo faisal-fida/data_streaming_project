@@ -1,9 +1,10 @@
-kafka-python==2.0.2
+kafka-python<1.5.0,>=1.4.6
 faust==1.10.4
-fastavro==1.6.3
+fastavro==1.10.0
 psycopg2-binary==2.9.6
-confluent-kafka==2.1.2
+confluent-kafka==2.2.0
 fastapi==0.95.1
 uvicorn==0.22.0
-databases[postgresql]==0.7.2
+databases[postgresql]==0.7.0
 httpx==0.24.0
+jsonschema==4.17.3

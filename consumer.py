@@ -6,13 +6,25 @@ from kafka.errors import KafkaError
 import time
 import os
 import uuid
+import io
 from jsonschema import validate, ValidationError
+from fastavro import schemaless_reader, parse_schema
+
+
+# Set up a filter to add correlation_id to log records
+class CorrelationIDFilter(logging.Filter):
+    def filter(self, record):
+        if not hasattr(record, "correlation_id"):
+            record.correlation_id = "N/A"
+        return True
+
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [%(correlation_id)s] %(message)s",
 )
 logger = logging.getLogger("consumer")
+logger.addFilter(CorrelationIDFilter())
 
 # JSON schema for sensor data validation
 sensor_schema = {
@@ -25,6 +37,19 @@ sensor_schema = {
     },
     "required": ["sensor_id", "temperature", "humidity", "timestamp"],
 }
+
+# Avro schema for sensor data
+avro_schema = {
+    "type": "record",
+    "name": "SensorData",
+    "fields": [
+        {"name": "sensor_id", "type": "int"},
+        {"name": "temperature", "type": "float"},
+        {"name": "humidity", "type": "float"},
+        {"name": "timestamp", "type": "long"},
+    ],
+}
+parsed_avro_schema = parse_schema(avro_schema)
 
 
 def connect_db():
@@ -79,6 +104,19 @@ def insert_data(conn, data):
         conn.commit()
 
 
+def deserialize_avro(binary_data, schema):
+    """Deserialize Avro binary data to Python dict."""
+    try:
+        bytes_reader = io.BytesIO(binary_data)
+        return schemaless_reader(bytes_reader, schema)
+    except Exception as e:
+        # If Avro deserialization fails, try JSON
+        try:
+            return json.loads(binary_data.decode("utf-8"))
+        except:
+            raise e
+
+
 def main():
     max_retries = 5
     retry_count = 0
@@ -93,7 +131,7 @@ def main():
                 auto_offset_reset="earliest",
                 enable_auto_commit=True,
                 group_id=os.getenv("KAFKA_CONSUMER_GROUP", "sensor-group"),
-                value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+                # Don't use a deserializer, we'll handle both Avro and JSON
                 # Add consumer timeout for better error handling
                 consumer_timeout_ms=30000,
                 # Add security settings
@@ -114,8 +152,11 @@ def main():
             try:
                 for message in consumer:
                     correlation_id = str(uuid.uuid4())
-                    data = message.value
                     try:
+                        # Try to deserialize as Avro first, then fall back to JSON
+                        data = deserialize_avro(message.value, parsed_avro_schema)
+
+                        # Validate against JSON schema
                         validate(instance=data, schema=sensor_schema)
                         logger.info(
                             f"Received data: {data}",

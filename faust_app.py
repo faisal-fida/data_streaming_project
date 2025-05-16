@@ -1,16 +1,44 @@
-import faust
 import logging
 import os
 import io
 from fastavro import schemaless_reader, parse_schema
 import uuid
 import asyncio
+import importlib.util
+
+# Check if venusian is installed and patch it if needed
+venusian_spec = importlib.util.find_spec("venusian")
+if venusian_spec:
+    import venusian
+
+    if not hasattr(venusian, "lift"):
+        # Patch venusian for Python 3.12 compatibility
+        import sys
+
+        if sys.version_info >= (3, 12):
+            import importlib.abc
+            import importlib.machinery
+
+            venusian.lift = lambda x: x
+
+# Now import faust
+import faust
+
+
+# Set up a filter to add correlation_id to log records
+class CorrelationIDFilter(logging.Filter):
+    def filter(self, record):
+        if not hasattr(record, "correlation_id"):
+            record.correlation_id = "N/A"
+        return True
+
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [%(correlation_id)s] %(message)s",
 )
 logger = logging.getLogger("faust_app")
+logger.addFilter(CorrelationIDFilter())
 
 # Avro schema for sensor data
 schema = {
@@ -27,7 +55,7 @@ parsed_schema = parse_schema(schema)
 
 app = faust.App(
     "sensor-stream-app",
-    broker=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka://localhost:9092"),
+    broker=f"kafka://{os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')}",
     value_serializer="raw",
 )
 
